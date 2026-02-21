@@ -1,5 +1,6 @@
 import React from 'react';
 import { Button } from './ui/Button';
+import { ModeToggle } from './ModeToggle';
 
 export const Navbar = () => {
     return (
@@ -18,6 +19,7 @@ export const Navbar = () => {
                 <a href="#how-it-works" className="transition-colors hover:text-accent">Process</a>
                 <a href="#faq" className="transition-colors hover:text-accent">FAQ</a>
                 <a href="#" className="transition-colors hover:text-accent">Ecosystem</a>
+                <ModeToggle />
             </div>
 
             <div className="flex items-center gap-4">
