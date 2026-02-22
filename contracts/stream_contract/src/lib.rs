@@ -1,10 +1,18 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, token, Address, Env, Symbol,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, Env,
+    Symbol,
 };
 
-#[derive(Clone)]
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DataKey {
+    Stream(u64),
+    StreamCounter,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
 pub struct Stream {
     pub sender: Address,
@@ -16,13 +24,6 @@ pub struct Stream {
     pub start_time: u64,
     pub last_update_time: u64,
     pub is_active: bool,
-}
-
-#[derive(Clone)]
-#[contracttype]
-pub enum DataKey {
-    Stream(u64),
-    StreamCounter,
 }
 
 #[contracterror]
@@ -87,18 +88,20 @@ impl StreamContract {
     ) -> u64 {
         sender.require_auth();
 
+        if amount <= 0 {
+            panic_with_error!(&env, StreamError::InvalidAmount);
+        }
+        if duration == 0 {
+            panic_with_error!(&env, StreamError::InvalidAmount);
+        }
+
         let stream_id = Self::get_next_stream_id(&env);
         let start_time = env.ledger().timestamp();
+        let rate_per_second = amount / (duration as i128);
 
         let token_client = token::Client::new(&env, &token_address);
         let contract_address = env.current_contract_address();
         token_client.transfer(&sender, &contract_address, &amount);
-
-        let rate_per_second = if duration == 0 {
-            amount
-        } else {
-            amount / duration as i128
-        };
 
         let stream = Stream {
             sender: sender.clone(),
@@ -147,8 +150,21 @@ impl StreamContract {
     pub fn withdraw(env: Env, recipient: Address, stream_id: u64) {
         recipient.require_auth();
 
-        let amount = 0_i128;
+        let stream_key = DataKey::Stream(stream_id);
+        let mut stream: Stream = match env.storage().persistent().get(&stream_key) {
+            Some(s) => s,
+            None => return,
+        };
+
+        if stream.recipient != recipient || !stream.is_active {
+            return;
+        }
+
+        // Placeholder amount calculation.
+        let amount: i128 = 0;
         let timestamp = env.ledger().timestamp();
+        stream.last_update_time = timestamp;
+        env.storage().persistent().set(&stream_key, &stream);
 
         env.events().publish(
             (Symbol::new(&env, "tokens_withdrawn"), stream_id),
@@ -164,27 +180,30 @@ impl StreamContract {
     pub fn cancel_stream(env: Env, sender: Address, stream_id: u64) {
         sender.require_auth();
 
-        let key = DataKey::Stream(stream_id);
-        let storage = env.storage().persistent();
-        let mut stream: Stream = match storage.get(&key) {
+        let stream_key = DataKey::Stream(stream_id);
+        let mut stream: Stream = match env.storage().persistent().get(&stream_key) {
             Some(s) => s,
             None => return,
         };
 
-        if stream.sender != sender {
+        if stream.sender != sender || !stream.is_active {
             return;
         }
 
         stream.is_active = false;
-        storage.set(&key, &stream);
+        stream.last_update_time = env.ledger().timestamp();
+        let amount_withdrawn = stream.withdrawn_amount;
+        let recipient = stream.recipient.clone();
+
+        env.storage().persistent().set(&stream_key, &stream);
 
         env.events().publish(
             (Symbol::new(&env, "stream_cancelled"), stream_id),
             StreamCancelledEvent {
                 stream_id,
                 sender,
-                recipient: stream.recipient,
-                amount_withdrawn: stream.withdrawn_amount,
+                recipient,
+                amount_withdrawn,
             },
         );
     }
@@ -201,10 +220,10 @@ impl StreamContract {
             return Err(StreamError::InvalidAmount);
         }
 
+        let stream_key = DataKey::Stream(stream_id);
         let storage = env.storage().persistent();
-        let key = DataKey::Stream(stream_id);
 
-        let mut stream: Stream = match storage.get(&key) {
+        let mut stream: Stream = match storage.get(&stream_key) {
             Some(s) => s,
             None => return Err(StreamError::StreamNotFound),
         };
@@ -224,7 +243,7 @@ impl StreamContract {
         stream.deposited_amount += amount;
         stream.last_update_time = env.ledger().timestamp();
 
-        storage.set(&key, &stream);
+        storage.set(&stream_key, &stream);
 
         env.events().publish(
             (Symbol::new(&env, "stream_topped_up"), stream_id),
