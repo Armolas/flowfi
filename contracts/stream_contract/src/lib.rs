@@ -10,6 +10,7 @@ use soroban_sdk::{
 pub enum DataKey {
     Stream(u64),
     StreamCounter,
+    ProtocolConfig,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -26,6 +27,14 @@ pub struct Stream {
     pub is_active: bool,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolConfig {
+    pub admin: Address,
+    pub treasury: Address,
+    pub fee_rate_bps: u32,
+}
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum StreamError {
@@ -33,6 +42,10 @@ pub enum StreamError {
     StreamNotFound = 2,
     Unauthorized = 3,
     StreamInactive = 4,
+    AlreadyInitialized = 5,
+    NotAdmin = 6,
+    InvalidFeeRate = 7,
+    NotInitialized = 8,
 }
 
 #[contracttype]
@@ -73,11 +86,142 @@ pub struct StreamToppedUpEvent {
     pub new_deposited_amount: i128,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeCollectedEvent {
+    pub stream_id: u64,
+    pub treasury: Address,
+    pub fee_amount: i128,
+    pub token: Address,
+}
+
 #[contract]
 pub struct StreamContract;
 
+/// Maximum fee rate: 1000 basis points = 10%
+const MAX_FEE_RATE_BPS: u32 = 1_000;
+
 #[contractimpl]
 impl StreamContract {
+    // ─── Admin: Protocol Fee Configuration ───────────────────────────
+
+    /// One-time initialization of the protocol fee config.
+    /// Sets the admin, treasury address, and fee rate (in basis points).
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        treasury: Address,
+        fee_rate_bps: u32,
+    ) -> Result<(), StreamError> {
+        admin.require_auth();
+
+        if env
+            .storage()
+            .instance()
+            .has(&DataKey::ProtocolConfig)
+        {
+            return Err(StreamError::AlreadyInitialized);
+        }
+
+        if fee_rate_bps > MAX_FEE_RATE_BPS {
+            return Err(StreamError::InvalidFeeRate);
+        }
+
+        let config = ProtocolConfig {
+            admin,
+            treasury,
+            fee_rate_bps,
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::ProtocolConfig, &config);
+
+        Ok(())
+    }
+
+    /// Update the treasury address and/or fee rate. Admin-only.
+    pub fn update_fee_config(
+        env: Env,
+        admin: Address,
+        treasury: Address,
+        fee_rate_bps: u32,
+    ) -> Result<(), StreamError> {
+        admin.require_auth();
+
+        let config: ProtocolConfig = env
+            .storage()
+            .instance()
+            .get(&DataKey::ProtocolConfig)
+            .ok_or(StreamError::NotInitialized)?;
+
+        if config.admin != admin {
+            return Err(StreamError::NotAdmin);
+        }
+
+        if fee_rate_bps > MAX_FEE_RATE_BPS {
+            return Err(StreamError::InvalidFeeRate);
+        }
+
+        let new_config = ProtocolConfig {
+            admin: config.admin,
+            treasury,
+            fee_rate_bps,
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::ProtocolConfig, &new_config);
+
+        Ok(())
+    }
+
+    /// Read the current protocol fee configuration (returns None if not initialized).
+    pub fn get_fee_config(env: Env) -> Option<ProtocolConfig> {
+        env.storage()
+            .instance()
+            .get(&DataKey::ProtocolConfig)
+    }
+
+    // ─── Fee Collection ──────────────────────────────────────────────
+
+    /// Deducts protocol fee from `amount` and transfers it to the treasury.
+    /// Returns the net amount (amount - fee). If no config or fee is 0, returns `amount` unchanged.
+    fn collect_fee(
+        env: &Env,
+        token_address: &Address,
+        amount: i128,
+        stream_id: u64,
+    ) -> i128 {
+        let config: Option<ProtocolConfig> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ProtocolConfig);
+
+        match config {
+            Some(cfg) if cfg.fee_rate_bps > 0 => {
+                let fee = amount * (cfg.fee_rate_bps as i128) / 10_000;
+                if fee > 0 {
+                    let token_client = token::Client::new(env, token_address);
+                    let contract_address = env.current_contract_address();
+                    token_client.transfer(&contract_address, &cfg.treasury, &fee);
+
+                    env.events().publish(
+                        (Symbol::new(env, "fee_collected"), stream_id),
+                        FeeCollectedEvent {
+                            stream_id,
+                            treasury: cfg.treasury,
+                            fee_amount: fee,
+                            token: token_address.clone(),
+                        },
+                    );
+                }
+                amount - fee
+            }
+            _ => amount,
+        }
+    }
+
+    // ─── Stream Operations ───────────────────────────────────────────
+
     pub fn create_stream(
         env: Env,
         sender: Address,
@@ -94,18 +238,22 @@ impl StreamContract {
 
         let stream_id = Self::get_next_stream_id(&env);
         let start_time = env.ledger().timestamp();
-        let rate_per_second = amount / (duration as i128);
 
+        // Transfer full amount from sender to contract
         let token_client = token::Client::new(&env, &token_address);
         let contract_address = env.current_contract_address();
         token_client.transfer(&sender, &contract_address, &amount);
+
+        // Deduct protocol fee (if configured) and get net amount for the stream
+        let net_amount = Self::collect_fee(&env, &token_address, amount, stream_id);
+        let rate_per_second = net_amount / (duration as i128);
 
         let stream = Stream {
             sender: sender.clone(),
             recipient: recipient.clone(),
             token_address: token_address.clone(),
             rate_per_second,
-            deposited_amount: amount,
+            deposited_amount: net_amount,
             withdrawn_amount: 0,
             start_time,
             last_update_time: start_time,
@@ -258,11 +406,15 @@ impl StreamContract {
             return Err(StreamError::StreamInactive);
         }
 
+        // Transfer full amount from sender to contract
         let token_client = token::Client::new(&env, &stream.token_address);
         let contract_address = env.current_contract_address();
         token_client.transfer(&sender, &contract_address, &amount);
 
-        stream.deposited_amount += amount;
+        // Deduct protocol fee (if configured) and add net amount to stream
+        let net_amount = Self::collect_fee(&env, &stream.token_address, amount, stream_id);
+
+        stream.deposited_amount += net_amount;
         stream.last_update_time = env.ledger().timestamp();
 
         storage.set(&stream_key, &stream);
@@ -272,7 +424,7 @@ impl StreamContract {
             StreamToppedUpEvent {
                 stream_id,
                 sender,
-                amount,
+                amount: net_amount,
                 new_deposited_amount: stream.deposited_amount,
             },
         );
