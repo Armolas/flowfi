@@ -296,6 +296,28 @@ impl StreamContract {
         next_id
     }
 
+
+fn calculate_claimable(stream: &Stream, now: u64) -> i128 {
+    let elapsed = now.saturating_sub(stream.last_update_time);
+
+    let streamed = match (elapsed as i128).checked_mul(stream.rate_per_second) {
+        Some(val) => val,
+        None => i128::MAX,
+    };
+
+    let remaining = stream
+        .deposited_amount
+        .saturating_sub(stream.withdrawn_amount);
+
+    if streamed > remaining {
+        remaining
+    } else {
+        streamed
+    }
+}
+
+
+
     pub fn withdraw(env: Env, recipient: Address, stream_id: u64) -> Result<i128, StreamError> {
         recipient.require_auth();
 
@@ -315,11 +337,12 @@ impl StreamContract {
             return Err(StreamError::StreamInactive);
         }
 
-        let claimable = stream.deposited_amount - stream.withdrawn_amount;
-        if claimable <= 0 {
-            return Err(StreamError::InvalidAmount);
-        }
+        let now = env.ledger().timestamp();
+        let claimable = Self::calculate_claimable(&stream, now);
 
+if claimable <= 0 {
+    return Err(StreamError::InvalidAmount);
+}
         let token_client = token::Client::new(&env, &stream.token_address);
         let contract_address = env.current_contract_address();
         token_client.transfer(&contract_address, &recipient, &claimable);
