@@ -1,13 +1,13 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
-import { subscribe } from '../controllers/sse.controller.js';
-import { sseService } from '../services/sse.service.js';
+import { subscribe } from '../../controllers/sse.controller.js';
+import { sseService } from '../../services/sse.service.js';
 
 const router = Router();
 
 /**
  * @openapi
- * /events/subscribe:
+ * /v1/events/subscribe:
  *   get:
  *     tags:
  *       - Events
@@ -26,7 +26,26 @@ const router = Router();
  *       - `stream.withdrawn` - Funds withdrawn from stream
  *       - `stream.cancelled` - Stream cancelled
  *       - `stream.completed` - Stream completed
+ *       
+ *       **Sandbox Mode:**
+ *       - Add header `X-Sandbox-Mode: true` or query parameter `?sandbox=true`
+ *       - Sandbox events are clearly marked with `_sandbox` metadata
+ *       - Sandbox events are isolated from production events
  *     parameters:
+ *       - in: header
+ *         name: X-Sandbox-Mode
+ *         schema:
+ *           type: string
+ *           enum: ["true", "1"]
+ *         description: Enable sandbox mode for testing
+ *         required: false
+ *       - in: query
+ *         name: sandbox
+ *         schema:
+ *           type: string
+ *           enum: ["true", "1"]
+ *         description: Enable sandbox mode via query parameter
+ *         required: false
  *       - in: query
  *         name: streams
  *         schema:
@@ -63,7 +82,7 @@ router.get('/subscribe', subscribe);
 
 /**
  * @openapi
- * /events/stats:
+ * /v1/events/stats:
  *   get:
  *     tags:
  *       - Events

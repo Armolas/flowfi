@@ -7,6 +7,8 @@ import {
 } from "@/lib/dashboard";
 import { shortenPublicKey, type WalletSession } from "@/lib/wallet";
 import IncomingStreams from "../IncomingStreams";
+import { StreamCreationWizard, type StreamFormData } from "../stream-creation/StreamCreationWizard";
+import { Button } from "../ui/Button";
 
 interface DashboardViewProps {
   session: WalletSession;
@@ -183,6 +185,7 @@ function renderRecentActivity(snapshot: DashboardSnapshot) {
 
 export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const [activeTab, setActiveTab] = React.useState("overview");
+  const [showWizard, setShowWizard] = React.useState(false);
   const stats = getMockDashboardStats(session.walletId);
 
   const handleTopUp = (streamId: string) => {
@@ -192,6 +195,21 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       // TODO: Integrate with Soroban contract's top_up_stream function
       alert(`Successfully added ${amount} to stream ${streamId}`);
     }
+  };
+
+  const handleCreateStream = async (data: StreamFormData) => {
+    console.log("Creating stream with data:", data);
+    // TODO: Integrate with Soroban contract's create_stream function
+    // This would involve:
+    // 1. Converting duration to seconds
+    // 2. Calling the contract's create_stream function
+    // 3. Handling the transaction signing
+    // 4. Waiting for confirmation
+    
+    // For now, simulate success
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    alert(`Stream created successfully!\n\nRecipient: ${data.recipient}\nToken: ${data.token}\nAmount: ${data.amount}\nDuration: ${data.duration} ${data.durationUnit}`);
+    setShowWizard(false);
   };
 
   const renderContent = () => {
@@ -213,6 +231,11 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                     <li>Invite a recipient to start receiving funds</li>
                     <li>Check back once transactions are confirmed</li>
                   </ul>
+                  <div className="mt-6">
+                    <Button onClick={() => setShowWizard(true)} glow>
+                      Create Your First Stream
+                    </Button>
+                  </div>
                 </section>
             );
         }
@@ -260,9 +283,14 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
             <h1>{SIDEBAR_ITEMS.find(item => item.id === activeTab)?.label}</h1>
           </div>
 
-          <div className="wallet-chip">
-            <span>{session.walletName}</span>
-            <strong>{shortenPublicKey(session.publicKey)}</strong>
+          <div className="flex items-center gap-4">
+            <Button onClick={() => setShowWizard(true)} glow>
+              Create Stream
+            </Button>
+            <div className="wallet-chip">
+              <span>{session.walletName}</span>
+              <strong>{shortenPublicKey(session.publicKey)}</strong>
+            </div>
           </div>
         </header>
 
@@ -281,6 +309,13 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
           </button>
         </div>
       </section>
+
+      {showWizard && (
+        <StreamCreationWizard
+          onClose={() => setShowWizard(false)}
+          onSubmit={handleCreateStream}
+        />
+      )}
     </main>
   );
 }
