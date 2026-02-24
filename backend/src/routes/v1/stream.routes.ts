@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createStream } from '../../controllers/stream.controller.js';
+import { createStream, listStreams, getStream, getStreamEvents } from '../../controllers/stream.controller.js';
 
 const router = Router();
 
@@ -81,5 +81,90 @@ const router = Router();
  *               $ref: '#/components/schemas/Error'
  */
 router.post('/', createStream);
+
+/**
+ * @openapi
+ * /v1/streams:
+ *   get:
+ *     tags:
+ *       - Streams
+ *     summary: List streams
+ *     description: Retrieve a list of payment streams, optionally filtered by sender or recipient.
+ *     parameters:
+ *       - in: query
+ *         name: sender
+ *         schema:
+ *           type: string
+ *         description: Filter by sender public key
+ *       - in: query
+ *         name: recipient
+ *         schema:
+ *           type: string
+ *         description: Filter by recipient public key
+ *     responses:
+ *       200:
+ *         description: List of streams
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/Stream'
+ */
+router.get('/', listStreams);
+
+/**
+ * @openapi
+ * /v1/streams/{streamId}:
+ *   get:
+ *     tags:
+ *       - Streams
+ *     summary: Get a single stream
+ *     description: Retrieve detailed information about a specific stream by its on-chain ID.
+ *     parameters:
+ *       - in: path
+ *         name: streamId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: On-chain stream ID
+ *     responses:
+ *       200:
+ *         description: Stream details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Stream'
+ *       404:
+ *         description: Stream not found
+ */
+router.get('/:streamId', getStream);
+
+/**
+ * @openapi
+ * /v1/streams/{streamId}/events:
+ *   get:
+ *     tags:
+ *       - Streams
+ *     summary: List stream events
+ *     description: Retrieve all events associated with a specific stream.
+ *     parameters:
+ *       - in: path
+ *         name: streamId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: On-chain stream ID
+ *     responses:
+ *       200:
+ *         description: List of stream events
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/StreamEvent'
+ */
+router.get('/:streamId/events', getStreamEvents);
 
 export default router;

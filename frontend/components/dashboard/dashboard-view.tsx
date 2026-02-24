@@ -2,7 +2,8 @@
 import React from "react";
 
 import {
-  getMockDashboardStats,
+  getDashboardAnalytics,
+  fetchDashboardData,
   type DashboardSnapshot,
 } from "@/lib/dashboard";
 import { shortenPublicKey, type WalletSession } from "@/lib/wallet";
@@ -37,6 +38,20 @@ function formatCurrency(value: number): string {
   }).format(value);
 }
 
+function formatAnalyticsValue(
+  value: number,
+  format: "currency" | "percent",
+): string {
+  if (format === "currency") {
+    return formatCurrency(value);
+  }
+
+  return new Intl.NumberFormat("en-US", {
+    style: "percent",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
 function formatActivityTime(timestamp: string): string {
   const date = new Date(timestamp);
 
@@ -48,6 +63,41 @@ function formatActivityTime(timestamp: string): string {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
+}
+
+function renderAnalytics(snapshot: DashboardSnapshot | null) {
+  const metrics = getDashboardAnalytics(snapshot);
+
+  return (
+    <section className="dashboard-analytics-section" aria-label="Analytics overview">
+      <div className="dashboard-panel__header">
+        <h3>Analytics Overview</h3>
+        <span>Computed from wallet activity</span>
+      </div>
+
+      <div className="dashboard-analytics-grid">
+        {metrics.map((metric) => {
+          const isUnavailable = metric.value === null;
+
+          return (
+            <article
+              key={metric.id}
+              className="dashboard-analytics-card"
+              data-unavailable={isUnavailable ? "true" : undefined}
+            >
+              <p>{metric.label}</p>
+              <h2>
+                {isUnavailable
+                  ? "No data"
+                  : formatAnalyticsValue(metric.value!, metric.format)}
+              </h2>
+              <span>{isUnavailable ? metric.unavailableText : metric.detail}</span>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 function renderStats(snapshot: DashboardSnapshot) {
@@ -99,7 +149,7 @@ function renderStreams(
     <section className="dashboard-panel">
       <div className="dashboard-panel__header">
         <h3>My Active Streams</h3>
-        <span>{snapshot.streams.length} total</span>
+        <span>{snapshot.outgoingStreams.length} total</span>
       </div>
 
       <div className="overflow-x-auto">
@@ -114,7 +164,7 @@ function renderStreams(
             </tr>
           </thead>
           <tbody>
-            {snapshot.streams.map((stream) => (
+            {snapshot.outgoingStreams.map((stream) => (
               <tr key={stream.id}>
                 <td>{stream.date}</td>
                 <td>
@@ -186,7 +236,33 @@ function renderRecentActivity(snapshot: DashboardSnapshot) {
 export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const [activeTab, setActiveTab] = React.useState("overview");
   const [showWizard, setShowWizard] = React.useState(false);
-  const stats = getMockDashboardStats(session.walletId);
+  const [stats, setStats] = React.useState<DashboardSnapshot | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [prevKey, setPrevKey] = React.useState(session.publicKey);
+
+  // Reset loading state during render if key changes
+  if (session.publicKey !== prevKey) {
+    setPrevKey(session.publicKey);
+    setLoading(true);
+  }
+
+  React.useEffect(() => {
+    async function loadData() {
+      try {
+        setError(null);
+        const data = await fetchDashboardData(session.publicKey);
+        setStats(data);
+      } catch (err) {
+        setError("Failed to load dashboard data. Please check your connection to the FlowFi backend.");
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadData();
+  }, [session.publicKey]);
 
   const handleTopUp = (streamId: string) => {
     const amount = prompt(`Enter amount to add to stream ${streamId}:`);
@@ -205,7 +281,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     // 2. Calling the contract's create_stream function
     // 3. Handling the transaction signing
     // 4. Waiting for confirmation
-    
+
     // For now, simulate success
     await new Promise((resolve) => setTimeout(resolve, 1500));
     alert(`Stream created successfully!\n\nRecipient: ${data.recipient}\nToken: ${data.token}\nAmount: ${data.amount}\nDuration: ${data.duration} ${data.durationUnit}`);
@@ -214,45 +290,67 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
 
   const renderContent = () => {
     if (activeTab === "incoming") {
-      return <div className="mt-8"><IncomingStreams /></div>;
+      return <div className="mt-8"><IncomingStreams streams={stats?.incomingStreams || []} /></div>;
     }
 
     if (activeTab === "overview") {
-        if (!stats) {
-            return (
-                <section className="dashboard-empty-state">
-                  <h2>No stream data yet</h2>
-                  <p>
-                    Your account is connected, but there are no active or historical
-                    stream records available yet.
-                  </p>
-                  <ul>
-                    <li>Create your first payment stream</li>
-                    <li>Invite a recipient to start receiving funds</li>
-                    <li>Check back once transactions are confirmed</li>
-                  </ul>
-                  <div className="mt-6">
-                    <Button onClick={() => setShowWizard(true)} glow>
-                      Create Your First Stream
-                    </Button>
-                  </div>
-                </section>
-            );
-        }
+      if (loading) {
         return (
-            <div className="dashboard-content-stack mt-8">
-              {renderStats(stats)}
-              {renderStreams(stats, handleTopUp)}
-              {renderRecentActivity(stats)}
-            </div>
+          <div className="dashboard-loading-state mt-8">
+            <div className="spinner"></div>
+            <p>Fetching your stream data...</p>
+          </div>
         );
-    }
-    
-    return (
-        <div className="dashboard-empty-state mt-8">
-            <h2>Under Construction</h2>
-            <p>This tab is currently under development.</p>
+      }
+
+      if (error) {
+        return (
+          <div className="dashboard-error-state mt-8">
+            <h3>Oops! Something went wrong</h3>
+            <p>{error}</p>
+            <Button onClick={() => window.location.reload()} className="mt-4">
+              Retry
+            </Button>
+          </div>
+        );
+      }
+
+      if (!stats || (stats.outgoingStreams.length === 0 && stats.recentActivity.length === 0)) {
+        return (
+          <section className="dashboard-empty-state">
+            <h2>No stream data yet</h2>
+            <p>
+              Your account is connected, but there are no active or historical
+              stream records available yet.
+            </p>
+            <ul>
+              <li>Create your first payment stream</li>
+              <li>Invite a recipient to start receiving funds</li>
+              <li>Check back once transactions are confirmed</li>
+            </ul>
+            <div className="mt-6">
+              <Button onClick={() => setShowWizard(true)} glow>
+                Create Your First Stream
+              </Button>
+            </div>
+          </section>
+        );
+      }
+      return (
+        <div className="dashboard-content-stack mt-8">
+          {renderStats(stats)}
+          {renderAnalytics(stats)}
+          {renderStreams(stats, handleTopUp)}
+          {renderRecentActivity(stats)}
         </div>
+      );
+    }
+
+    return (
+      <div className="dashboard-empty-state mt-8">
+        <h2>Under Construction</h2>
+        <p>This tab is currently under development.</p>
+      </div>
     );
   };
 

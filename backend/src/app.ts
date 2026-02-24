@@ -140,10 +140,19 @@ app.get('/', (req: Request, res: Response) => {
  */
 app.get('/health', async (req: Request, res: Response) => {
     const { getSandboxConfig } = await import('./config/sandbox.js');
+    const { prisma } = await import('./lib/prisma.js');
     const sandboxConfig = getSandboxConfig();
-    
-    res.json({
-        status: 'healthy',
+
+    let dbStatus = 'healthy';
+    try {
+        await prisma.$queryRaw`SELECT 1`;
+    } catch (error) {
+        dbStatus = 'unhealthy';
+    }
+
+    const status = dbStatus === 'healthy' ? 'healthy' : 'unhealthy';
+    res.status(status === 'healthy' ? 200 : 503).json({
+        status,
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         version: '1.0.0',
@@ -151,11 +160,18 @@ app.get('/health', async (req: Request, res: Response) => {
             supported: ['v1'],
             default: 'v1',
         },
+        services: {
+            database: dbStatus,
+        },
         sandbox: {
             enabled: sandboxConfig.enabled,
             available: sandboxConfig.enabled,
         },
     });
 });
+
+import { errorHandler } from './middleware/error.middleware.js';
+
+app.use(errorHandler);
 
 export default app;
