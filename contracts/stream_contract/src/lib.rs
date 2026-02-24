@@ -51,7 +51,14 @@ impl StreamContract {
             return Err(StreamError::InvalidFeeRate);
         }
 
-        save_config(&env, &ProtocolConfig { admin, treasury, fee_rate_bps });
+        save_config(
+            &env,
+            &ProtocolConfig {
+                admin,
+                treasury,
+                fee_rate_bps,
+            },
+        );
         Ok(())
     }
 
@@ -221,6 +228,26 @@ impl StreamContract {
         Ok(())
     }
 
+    // ─── Internal Helpers ─────────────────────────────────────────────────────
+
+    fn calculate_claimable(stream: &Stream, now: u64) -> i128 {
+        let elapsed = now.saturating_sub(stream.last_update_time);
+
+        let streamed = (elapsed as i128)
+            .checked_mul(stream.rate_per_second)
+            .unwrap_or(i128::MAX);
+
+        let remaining = stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount);
+
+        if streamed > remaining {
+            remaining
+        } else {
+            streamed
+        }
+    }
+
     /// Withdraw all currently claimable tokens from a stream.
     ///
     /// Only the stream's recipient may call this. The stream is marked
@@ -231,30 +258,6 @@ impl StreamContract {
     /// - `Unauthorized`    — caller is not the stream's recipient.
     /// - `StreamInactive`  — stream is already inactive.
     /// - `InvalidAmount`   — no claimable balance (fully withdrawn already).
-
-
-fn calculate_claimable(stream: &Stream, now: u64) -> i128 {
-    let elapsed = now.saturating_sub(stream.last_update_time);
-
-    let streamed = match (elapsed as i128).checked_mul(stream.rate_per_second) {
-        Some(val) => val,
-        None => i128::MAX,
-    };
-
-    let remaining = stream
-        .deposited_amount
-        .saturating_sub(stream.withdrawn_amount);
-
-    if streamed > remaining {
-        remaining
-    } else {
-        streamed
-    }
-}
-
-
-
-
     pub fn withdraw(env: Env, recipient: Address, stream_id: u64) -> Result<i128, StreamError> {
         recipient.require_auth();
 
@@ -270,15 +273,18 @@ fn calculate_claimable(stream: &Stream, now: u64) -> i128 {
         let now = env.ledger().timestamp();
         let claimable = Self::calculate_claimable(&stream, now);
 
-if claimable <= 0 {
-    return Err(StreamError::InvalidAmount);
-}
+        if claimable <= 0 {
+            return Err(StreamError::InvalidAmount);
+        }
+
         let token_client = token::Client::new(&env, &stream.token_address);
         let contract_address = env.current_contract_address();
         token_client.transfer(&contract_address, &recipient, &claimable);
 
         stream.withdrawn_amount += claimable;
-        stream.last_update_time = env.ledger().timestamp();
+        stream.last_update_time = now;
+
+        // Mark stream as inactive if all funds have been withdrawn
         if stream.withdrawn_amount >= stream.deposited_amount {
             stream.is_active = false;
         }
@@ -319,8 +325,16 @@ if claimable <= 0 {
             return Err(StreamError::StreamInactive);
         }
 
-        // Refund the unspent balance to the sender.
-        let refunded_amount = stream.deposited_amount - stream.withdrawn_amount;
+        // Calculate accrued tokens that belong to the recipient
+        let now = env.ledger().timestamp();
+        let accrued_amount = Self::calculate_claimable(&stream, now);
+
+        // Refund only the unspent balance minus accrued tokens (accrued tokens stay for recipient)
+        let refunded_amount = stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount)
+            .saturating_sub(accrued_amount);
+
         if refunded_amount > 0 {
             let token_client = token::Client::new(&env, &stream.token_address);
             let contract_address = env.current_contract_address();
@@ -328,7 +342,7 @@ if claimable <= 0 {
         }
 
         stream.is_active = false;
-        stream.last_update_time = env.ledger().timestamp();
+        stream.last_update_time = now;
 
         let recipient = stream.recipient.clone();
         let amount_withdrawn = stream.withdrawn_amount;
@@ -369,11 +383,7 @@ if claimable <= 0 {
                 let fee = amount * (cfg.fee_rate_bps as i128) / 10_000;
                 if fee > 0 {
                     let token_client = token::Client::new(env, token_address);
-                    token_client.transfer(
-                        &env.current_contract_address(),
-                        &cfg.treasury,
-                        &fee,
-                    );
+                    token_client.transfer(&env.current_contract_address(), &cfg.treasury, &fee);
                     env.events().publish(
                         (Symbol::new(env, "fee_collected"), stream_id),
                         FeeCollectedEvent {
