@@ -51,7 +51,14 @@ impl StreamContract {
             return Err(StreamError::InvalidFeeRate);
         }
 
-        save_config(&env, &ProtocolConfig { admin, treasury, fee_rate_bps });
+        save_config(
+            &env,
+            &ProtocolConfig {
+                admin,
+                treasury,
+                fee_rate_bps,
+            },
+        );
         Ok(())
     }
 
@@ -318,8 +325,16 @@ impl StreamContract {
             return Err(StreamError::StreamInactive);
         }
 
-        // Refund the unspent balance to the sender.
-        let refunded_amount = stream.deposited_amount - stream.withdrawn_amount;
+        // Calculate accrued tokens that belong to the recipient
+        let now = env.ledger().timestamp();
+        let accrued_amount = Self::calculate_claimable(&stream, now);
+
+        // Refund only the unspent balance minus accrued tokens (accrued tokens stay for recipient)
+        let refunded_amount = stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount)
+            .saturating_sub(accrued_amount);
+
         if refunded_amount > 0 {
             let token_client = token::Client::new(&env, &stream.token_address);
             let contract_address = env.current_contract_address();
@@ -327,7 +342,7 @@ impl StreamContract {
         }
 
         stream.is_active = false;
-        stream.last_update_time = env.ledger().timestamp();
+        stream.last_update_time = now;
 
         let recipient = stream.recipient.clone();
         let amount_withdrawn = stream.withdrawn_amount;
@@ -368,11 +383,7 @@ impl StreamContract {
                 let fee = amount * (cfg.fee_rate_bps as i128) / 10_000;
                 if fee > 0 {
                     let token_client = token::Client::new(env, token_address);
-                    token_client.transfer(
-                        &env.current_contract_address(),
-                        &cfg.treasury,
-                        &fee,
-                    );
+                    token_client.transfer(&env.current_contract_address(), &cfg.treasury, &fee);
                     env.events().publish(
                         (Symbol::new(env, "fee_collected"), stream_id),
                         FeeCollectedEvent {

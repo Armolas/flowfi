@@ -16,9 +16,7 @@ pub fn next_stream_id(env: &Env) -> u64 {
         .get(&DataKey::StreamCounter)
         .unwrap_or(0)
         + 1;
-    env.storage()
-        .instance()
-        .set(&DataKey::StreamCounter, &id);
+    env.storage().instance().set(&DataKey::StreamCounter, &id);
     id
 }
 
@@ -47,18 +45,14 @@ pub fn save_stream(env: &Env, stream_id: u64, stream: &Stream) {
 
 /// Returns the stream if it exists, `None` otherwise (used by read-only queries).
 pub fn try_load_stream(env: &Env, stream_id: u64) -> Option<Stream> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Stream(stream_id))
+    env.storage().persistent().get(&DataKey::Stream(stream_id))
 }
 
 // ─── Protocol Config ──────────────────────────────────────────────────────────
 
 /// Checks whether the protocol config has already been initialized.
 pub fn config_exists(env: &Env) -> bool {
-    env.storage()
-        .instance()
-        .has(&DataKey::ProtocolConfig)
+    env.storage().instance().has(&DataKey::ProtocolConfig)
 }
 
 /// Loads the protocol config.
@@ -81,7 +75,5 @@ pub fn save_config(env: &Env, config: &ProtocolConfig) {
 /// Reads the protocol config as an `Option` (returns `None` if unset).
 /// Used by optional fee-collection logic.
 pub fn try_load_config(env: &Env) -> Option<ProtocolConfig> {
-    env.storage()
-        .instance()
-        .get(&DataKey::ProtocolConfig)
+    env.storage().instance().get(&DataKey::ProtocolConfig)
 }
