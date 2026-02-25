@@ -319,6 +319,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
 
   // --- Snapshot State (merged) ---
   const [snapshot, setSnapshot] = React.useState<DashboardSnapshot | null>(null);
+  const [isSnapshotLoading, setIsSnapshotLoading] = React.useState(true);
+  const [snapshotError, setSnapshotError] = React.useState<string | null>(null);
 
   // --- Helper Functions for missing logic ---
   const safeLoadTemplates = (): StreamTemplate[] => {
@@ -361,6 +363,36 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     if (!templatesHydrated) return;
     persistTemplates(templates);
   }, [templates, templatesHydrated]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    const loadSnapshot = async () => {
+      setIsSnapshotLoading(true);
+      setSnapshotError(null);
+
+      try {
+        const nextSnapshot = await fetchDashboardData(session.publicKey);
+        if (!cancelled) setSnapshot(nextSnapshot);
+      } catch (error) {
+        if (!cancelled) {
+          setSnapshot(null);
+          setSnapshotError(
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch dashboard data.",
+          );
+        }
+      } finally {
+        if (!cancelled) setIsSnapshotLoading(false);
+      }
+    };
+
+    void loadSnapshot();
+    return () => {
+      cancelled = true;
+    };
+  }, [session.publicKey]);
 
   const updateStreamForm = (field: keyof StreamFormValues, value: string) => {
     setStreamForm((previous) => ({ ...previous, [field]: value }));
@@ -588,14 +620,50 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
 
   const renderContent = () => {
     if (activeTab === "incoming") {
+      if (isSnapshotLoading) {
+        return (
+          <div className="dashboard-empty-state mt-8">
+            <h2>Loading streams...</h2>
+            <p>Fetching your incoming streams from the backend API.</p>
+          </div>
+        );
+      }
+
+      if (snapshotError) {
+        return (
+          <div className="dashboard-empty-state mt-8">
+            <h2>Could not load incoming streams</h2>
+            <p>{snapshotError}</p>
+          </div>
+        );
+      }
+
       return (
         <div className="mt-8">
-          <IncomingStreams />
+          <IncomingStreams streams={snapshot?.incomingStreams ?? []} />
         </div>
       );
     }
 
     if (activeTab === "overview") {
+      if (isSnapshotLoading) {
+        return (
+          <section className="dashboard-empty-state">
+            <h2>Loading dashboard...</h2>
+            <p>Fetching active and incoming streams from the backend API.</p>
+          </section>
+        );
+      }
+
+      if (snapshotError) {
+        return (
+          <section className="dashboard-empty-state">
+            <h2>Dashboard unavailable</h2>
+            <p>{snapshotError}</p>
+          </section>
+        );
+      }
+
       if (!snapshot) {
         return (
           <section className="dashboard-empty-state">
