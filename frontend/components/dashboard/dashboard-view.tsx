@@ -1,14 +1,31 @@
 "use client";
-import React from "react";
 
+/**
+ * components/dashboard/dashboard-view.tsx
+ *
+ * Changes from previous version:
+ *  - Removed "Mocked wallet session" warning banner (no longer relevant).
+ *  - wallet-chip now shows network badge alongside the public key.
+ *  - formatNetwork() used so "PUBLIC" → "Mainnet", "TESTNET" → "Testnet".
+ */
+
+import React from "react";
 import {
   getDashboardAnalytics,
   fetchDashboardData,
   type DashboardSnapshot,
 } from "@/lib/dashboard";
-import { shortenPublicKey, type WalletSession } from "@/lib/wallet";
+import {
+  shortenPublicKey,
+  formatNetwork,
+  isExpectedNetwork,
+  type WalletSession,
+} from "@/lib/wallet";
 import IncomingStreams from "../IncomingStreams";
-import { StreamCreationWizard, type StreamFormData } from "../stream-creation/StreamCreationWizard";
+import {
+  StreamCreationWizard,
+  type StreamFormData,
+} from "../stream-creation/StreamCreationWizard";
 import { Button } from "../ui/Button";
 
 interface DashboardViewProps {
@@ -79,10 +96,7 @@ function formatAnalyticsValue(
   value: number,
   format: "currency" | "percent",
 ): string {
-  if (format === "currency") {
-    return formatCurrency(value);
-  }
-
+  if (format === "currency") return formatCurrency(value);
   return new Intl.NumberFormat("en-US", {
     style: "percent",
     maximumFractionDigits: 1,
@@ -91,11 +105,7 @@ function formatAnalyticsValue(
 
 function formatActivityTime(timestamp: string): string {
   const date = new Date(timestamp);
-
-  if (Number.isNaN(date.getTime())) {
-    return timestamp;
-  }
-
+  if (Number.isNaN(date.getTime())) return timestamp;
   return new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
@@ -104,18 +114,18 @@ function formatActivityTime(timestamp: string): string {
 
 function renderAnalytics(snapshot: DashboardSnapshot | null) {
   const metrics = getDashboardAnalytics(snapshot);
-
   return (
-    <section className="dashboard-analytics-section" aria-label="Analytics overview">
+    <section
+      className="dashboard-analytics-section"
+      aria-label="Analytics overview"
+    >
       <div className="dashboard-panel__header">
         <h3>Analytics Overview</h3>
         <span>Computed from wallet activity</span>
       </div>
-
       <div className="dashboard-analytics-grid">
         {metrics.map((metric) => {
           const isUnavailable = metric.value === null;
-
           return (
             <article
               key={metric.id}
@@ -128,7 +138,9 @@ function renderAnalytics(snapshot: DashboardSnapshot | null) {
                   ? "No data"
                   : formatAnalyticsValue(metric.value!, metric.format)}
               </h2>
-              <span>{isUnavailable ? metric.unavailableText : metric.detail}</span>
+              <span>
+                {isUnavailable ? metric.unavailableText : metric.detail}
+              </span>
             </article>
           );
         })}
@@ -188,7 +200,6 @@ function renderStreams(
         <h3>My Active Streams</h3>
         <span>{snapshot.outgoingStreams.length} total</span>
       </div>
-
       <div className="overflow-x-auto">
         <table className="dashboard-table">
           <thead>
@@ -238,14 +249,12 @@ function renderRecentActivity(snapshot: DashboardSnapshot) {
         <h3>Recent Activity</h3>
         <span>{snapshot.recentActivity.length} items</span>
       </div>
-
       {snapshot.recentActivity.length > 0 ? (
         <ul className="activity-list">
           {snapshot.recentActivity.map((activity) => {
             const amountPrefix = activity.direction === "received" ? "+" : "-";
             const amountClass =
               activity.direction === "received" ? "is-positive" : "is-negative";
-
             return (
               <li key={activity.id} className="activity-item">
                 <div>
@@ -270,6 +279,7 @@ function renderRecentActivity(snapshot: DashboardSnapshot) {
   );
 }
 
+// ── Main component ────────────────────────────────────────────────────────────
 function safeLoadTemplates(): StreamTemplate[] {
   if (typeof window === "undefined") {
     return [];
@@ -397,6 +407,14 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     }
   };
 
+  const handleCreateStream = async (data: StreamFormData) => {
+    console.log("Creating stream with data:", data);
+    // TODO: Integrate with Soroban contract's create_stream function
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    alert(
+      `Stream created successfully!\n\nRecipient: ${data.recipient}\nToken: ${data.token}\nAmount: ${data.amount}\nDuration: ${data.duration} ${data.durationUnit}`,
+    );
+    setShowWizard(false);
   const handleApplyTemplate = (templateId: string) => {
     const template = templates.find((item) => item.id === templateId);
     if (!template) {
@@ -543,6 +561,15 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
 
   const renderContent = () => {
     if (activeTab === "incoming") {
+      return (
+        <div className="mt-8">
+          <IncomingStreams />
+        </div>
+      );
+    }
+
+    if (activeTab === "overview") {
+      if (!stats) {
       return <div className="mt-8"><IncomingStreams streams={stats?.incomingStreams || []} /></div>;
     }
 
@@ -848,6 +875,9 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     );
   };
 
+  const networkLabel = formatNetwork(session.network);
+  const networkOk = isExpectedNetwork(session.network);
+
   return (
     <main className="dashboard-shell">
       <aside className="dashboard-sidebar">
@@ -872,31 +902,41 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         <header className="dashboard-header">
           <div>
             <p className="kicker">Dashboard</p>
-            <h1>{SIDEBAR_ITEMS.find(item => item.id === activeTab)?.label}</h1>
+            <h1>
+              {SIDEBAR_ITEMS.find((item) => item.id === activeTab)?.label}
+            </h1>
           </div>
 
           <div className="flex items-center gap-4">
             <Button onClick={() => setShowWizard(true)} glow>
               Create Stream
             </Button>
-            <div className="wallet-chip">
-              <span>{session.walletName}</span>
-              <strong>{shortenPublicKey(session.publicKey)}</strong>
+
+            {/* Wallet chip — shows wallet name, network, and shortened key */}
+            <div className="wallet-chip" title={session.publicKey}>
+              <span className="wallet-chip__name">{session.walletName}</span>
+              <span
+                className="wallet-chip__network"
+                data-mainnet={networkLabel === "Mainnet" ? "true" : undefined}
+                data-mismatch={!networkOk ? "true" : undefined}
+              >
+                {networkLabel}
+              </span>
+              <strong className="wallet-chip__key">
+                {shortenPublicKey(session.publicKey)}
+              </strong>
             </div>
           </div>
         </header>
 
-        {session.mocked ? (
-          <p className="dashboard-note">
-            Mocked wallet session is active while adapter integrations are in
-            progress.
-          </p>
-        ) : null}
-
         {renderContent()}
 
         <div className="dashboard-actions">
-          <button type="button" className="secondary-button" onClick={onDisconnect}>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={onDisconnect}
+          >
             Disconnect Wallet
           </button>
         </div>
