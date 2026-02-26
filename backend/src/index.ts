@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import app from './app.js';
 import logger from './logger.js';
+import { sorobanIndexerService } from './services/soroban-indexer.service.js';
 
 dotenv.config();
 
@@ -17,6 +18,8 @@ const startServer = async () => {
             logger.info(`Server started on port ${port}`);
             logger.info(`API Documentation available at http://localhost:${port}/api-docs`);
         });
+
+        sorobanIndexerService.start();
     } catch (error) {
         logger.error('Failed to start server due to database connection error:', error);
         process.exit(1);
