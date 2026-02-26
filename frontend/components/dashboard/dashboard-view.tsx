@@ -28,6 +28,7 @@ import {
   createStream as sorobanCreateStream,
   topUpStream as sorobanTopUp,
   cancelStream as sorobanCancel,
+  withdrawFromStream as sorobanWithdraw,
   toBaseUnits,
   toDurationSeconds,
   getTokenAddress,
@@ -316,6 +317,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   >(null);
   const [streamFormMessage, setStreamFormMessage] =
     React.useState<StreamFormMessageState | null>(null);
+  const [withdrawingIncomingStreamId, setWithdrawingIncomingStreamId] =
+    React.useState<string | null>(null);
 
   // --- Snapshot State (merged) ---
   const [snapshot, setSnapshot] = React.useState<DashboardSnapshot | null>(null);
@@ -556,6 +559,26 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     }
   };
 
+  const handleIncomingWithdraw = async (stream: Stream) => {
+    const toastId = toast.loading("Withdrawing stream funds…");
+    setWithdrawingIncomingStreamId(stream.id);
+
+    try {
+      await sorobanWithdraw(session, {
+        streamId: BigInt(stream.id.replace(/\D/g, "") || "0"),
+      });
+
+      const refreshed = await fetchDashboardData(session.publicKey);
+      setSnapshot(refreshed);
+      toast.success("Withdrawal successful!", { id: toastId });
+    } catch (err) {
+      toast.error(toSorobanErrorMessage(err), { id: toastId });
+      throw err;
+    } finally {
+      setWithdrawingIncomingStreamId(null);
+    }
+  };
+
   const handleFormCreateStream = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const hasRequiredFields =
@@ -590,7 +613,11 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     if (activeTab === "incoming") {
       return (
         <div className="mt-8">
-          <IncomingStreams />
+          <IncomingStreams
+            streams={snapshot?.incomingStreams ?? []}
+            onWithdraw={handleIncomingWithdraw}
+            withdrawingStreamId={withdrawingIncomingStreamId}
+          />
         </div>
       );
     }
