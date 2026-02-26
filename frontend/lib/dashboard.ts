@@ -39,6 +39,8 @@ export interface DashboardAnalyticsMetric {
   unavailableText: string;
 }
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
+
 const STROOPS_DIVISOR = 1e7;
 
 function toTokenAmount(raw: string): number {

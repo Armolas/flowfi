@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import toast from "react-hot-toast";
 
 /**
@@ -233,6 +234,14 @@ function renderStreams(
                   </td>
                   <td className="text-right">
                     <div className="flex items-center justify-end gap-2">
+                      {/^\d+$/.test(stream.id) ? (
+                        <Link
+                          href={`/app/streams/${stream.id}`}
+                          className="secondary-button py-1 px-3 text-sm h-auto inline-flex items-center"
+                        >
+                          Details
+                        </Link>
+                      ) : null}
                       <button
                         type="button"
                         className="secondary-button py-1 px-3 text-sm h-auto"
